@@ -15,11 +15,6 @@ import org.apache.spark.sql.SparkSession
 
 import scala.io.Source
 
-/**
- * @author Hang Su <hangsu@gatech.edu>,
- * @author Yu Jing <yjing43@gatech.edu>,
- * @author Ming Liu <mliu302@gatech.edu>
- */
 object Main {
   def main(args: Array[String]) {
     import org.apache.log4j.{ Level, Logger }
@@ -83,6 +78,7 @@ object Main {
     val features = rawFeatures.map({ case (patientID, featureVector) => (patientID, scaler.transform(Vectors.dense(featureVector.toArray))) })
     println("features: " + features.count)
     val rawFeatureVectors = features.map(_._2).cache()
+    val rawFeatureIDs = features.map(_,_1)
     println("rawFeatureVectors: " + rawFeatureVectors.count)
 
     /** reduce dimension */
@@ -106,7 +102,14 @@ object Main {
      * Find Purity using that RDD as an input to Metrics.purity
      * Remove the placeholder below after your implementation
      */
-    val kMeansPurity = 0.0
+    val numClusters = 3
+    val iterations = 20
+    //featureVectors.cache()
+    val kMeansCluster=KMeans.train(featureVectors, numClusters, iterations,1,"k-means||",6250L).predict(featureVectors)
+    val kMeansResult=rawFeatureIDs.zip(kMeansCluster)
+    val compareKMeans=kMeansResult.join(phenotypeLabel).map(_._2)
+    val kMeansPurity = Metrics.purity(compareKMeans)
+    //val kMeansPurity = 0.0
 
     /**
      * TODO: GMMM Clustering using spark mllib
@@ -117,7 +120,11 @@ object Main {
      * Find Purity using that RDD as an input to Metrics.purity
      * Remove the placeholder below after your implementation
      */
-    val gaussianMixturePurity = 0.0
+    val GMMClusters= new GaussianMixture().setK(numClusters).setMaxIterations(iterations).setSeed(6250L).run(featureVectors).predict(featureVectors)
+    val GMMResult=rawFeatureIDs.zip(GMMClusters)
+    val compareGMM=GMMResult.join(phenotypeLabel).map(_._2)
+    val gaussianMixturePurity = Metrics.purity(compareGMM)
+    //val gaussianMixturePurity = 0.0
 
     /**
      * TODO: StreamingKMeans Clustering using spark mllib
@@ -130,9 +137,12 @@ object Main {
      * Find Purity using that RDD as an input to Metrics.purity
      * Remove the placeholder below after your implementation
      */
-    val streamKmeansPurity = 0.0
+    val streamKmeansClusters = new StreamingKMeans().setDecayFactor(1.0).setK(3).setRandomCenters(10,0.5,6250L).trainOn(featureVectors).predictOn(featureVectors)
+    val streamKmeansResult = rawFeatureIDs.zip(streamKmeansClusters)
+    val comparestreamKmeans=streamKmeansResult.join(phenotypeLabel).map(_._2)
+    val treamKmeansPurity = Metrics.purity(comparestreamKmeans)
 
-
+    //val streamKmeansPurity = 0.0
     (kMeansPurity, gaussianMixturePurity, streamKmeansPurity)
   }
 
@@ -180,9 +190,16 @@ object Main {
      * TODO: implement your own code here and remove
      * existing placeholder code below
      */
-    val medication: RDD[Medication] = spark.sparkContext.emptyRDD
-    val labResult: RDD[LabResult] = spark.sparkContext.emptyRDD
-    val diagnostic: RDD[Diagnostic] = spark.sparkContext.emptyRDD
+    val medicationdata=CSVUtils.loadCSVAsTable(sqlContext,"data/medication_orders_INPUT.csv","MedicationTable")
+    val labResultdata=CSVUtils.loadCSVAsTable(sqlContext,"data/lab_results_INPUT.csv","LabTable")
+    val IDdata=CSVUtils.loadCSVAsTable(sqlContext,"data/encounter_INPUT.csv","IDTable")
+    val diagnosedata=CSVUtils.loadCSVAsTable(sqlContext,"data/encounter_dx_INPUT.csv","DiagTable")
+    val RDDrowmed= sqlContext.sql("SELECT Member_ID AS patientID, Order_Date AS date, Drug_Name AS medicine  FROM MedicationTable")
+    val RDDrowdiag= sqlContext.sql("SELECT IDTable.Member_ID AS patientID, IDTable.Encounter_DateTime AS date, DiagTable.code AS code  FROM IDTable INNER JOIN DiagTable ON IDTable.Encounter_ID= DiagTable.Encounter_ID")
+    val RDDrowlab=  sqlContext.sql("SELECT Member_ID AS patientID, Date_Resulted AS date, Result_Name AS testName, Numeric_Result as value  FROM LabTable WHERE Numeric_Result!=''")
+    val medication: RDD[Medication] = RDDrowmed.map(p => Medication(p(0).asInstanceOf[String],sqlDateParser.parse(p(1).asInstanceOf[String]),p(2).asInstanceOf[String].toLowerCase))
+    val labResult: RDD[LabResult] = RDDrowlab.map(p => LabResult(p(0).asInstanceOf[String],sqlDateParser.parse(p(1).asInstanceOf[String]),p(2).asInstanceOf[String].toLowerCase,p(3).asInstanceOf[String].filterNot(",".toSet).toDouble))
+    val diagnostic: RDD[Diagnostic] =  RDDrowdiag.map(p => Diagnostic(p(0).asInstanceOf[String],sqlDateParser.parse(p(1).asInstanceOf[String]),p(2).asInstanceOf[String].toLowerCase))
 
     (medication, labResult, diagnostic)
   }

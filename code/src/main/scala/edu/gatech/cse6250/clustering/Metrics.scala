@@ -24,6 +24,14 @@ object Metrics {
     /**
      * TODO: Remove the placeholder and implement your code here
      */
-    0.0
+
+    clusterAssignmentAndLabel.map(f =>(f,1))
+      .keyBy(_._1)
+      .reduceByKey((x,y) =>(x._1,x._2+y._2))
+      .map(f => (f._2._1._1,f._2._2))
+      .keyBy(_._1)
+      .reduceByKey((x,y) =>(1,max(x._2,y._2)))
+      .map(f => f._2._2)
+      .reduce((x,y) => x+y)/clusterAssignmentAndLabel.count().toDouble
   }
 }
