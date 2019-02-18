@@ -1,7 +1,5 @@
 package edu.gatech.cse6250.main
 
-import java.text.SimpleDateFormat
-
 import edu.gatech.cse6250.clustering.Metrics
 import edu.gatech.cse6250.features.FeatureConstruction
 import edu.gatech.cse6250.helper.{ CSVHelper, SparkHelper }
@@ -12,6 +10,10 @@ import org.apache.spark.mllib.feature.StandardScaler
 import org.apache.spark.mllib.linalg.{ DenseMatrix, Matrices, Vector, Vectors }
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.Row
+import org.apache.spark.SparkContext._
+import java.text.SimpleDateFormat
+import java.sql.Date
 
 import scala.io.Source
 
@@ -78,7 +80,7 @@ object Main {
     val features = rawFeatures.map({ case (patientID, featureVector) => (patientID, scaler.transform(Vectors.dense(featureVector.toArray))) })
     println("features: " + features.count)
     val rawFeatureVectors = features.map(_._2).cache()
-    val rawFeatureIDs = features.map(_,_1)
+    val rawFeatureIDs = features.map(_._1)
     println("rawFeatureVectors: " + rawFeatureVectors.count)
 
     /** reduce dimension */
@@ -105,9 +107,16 @@ object Main {
     val numClusters = 3
     val iterations = 20
     //featureVectors.cache()
-    val kMeansCluster=KMeans.train(featureVectors, numClusters, iterations,1,"k-means||",6250L).predict(featureVectors)
-    val kMeansResult=rawFeatureIDs.zip(kMeansCluster)
-    val compareKMeans=kMeansResult.join(phenotypeLabel).map(_._2)
+    val kMeans = new KMeans()
+    kMeans.setK(numClusters)
+    kMeans.setMaxIterations(iterations)
+    kMeans.setInitializationMode("k-means||")
+    kMeans.setInitializationSteps(1)
+    kMeans.setSeed(6250L)
+    val kMeansModel = kMeans.run(featureVectors)
+    val kMeansCluster = kMeansModel.predict(featureVectors)
+    val kMeansResult = rawFeatureIDs.zip(kMeansCluster)
+    val compareKMeans = kMeansResult.join(phenotypeLabel).map(_._2)
     val kMeansPurity = Metrics.purity(compareKMeans)
     //val kMeansPurity = 0.0
 
@@ -120,9 +129,9 @@ object Main {
      * Find Purity using that RDD as an input to Metrics.purity
      * Remove the placeholder below after your implementation
      */
-    val GMMClusters= new GaussianMixture().setK(numClusters).setMaxIterations(iterations).setSeed(6250L).run(featureVectors).predict(featureVectors)
-    val GMMResult=rawFeatureIDs.zip(GMMClusters)
-    val compareGMM=GMMResult.join(phenotypeLabel).map(_._2)
+    val GMMClusters = new GaussianMixture().setK(numClusters).setMaxIterations(iterations).setSeed(6250L).run(featureVectors).predict(featureVectors)
+    val GMMResult = rawFeatureIDs.zip(GMMClusters)
+    val compareGMM = GMMResult.join(phenotypeLabel).map(_._2)
     val gaussianMixturePurity = Metrics.purity(compareGMM)
     //val gaussianMixturePurity = 0.0
 
@@ -137,10 +146,17 @@ object Main {
      * Find Purity using that RDD as an input to Metrics.purity
      * Remove the placeholder below after your implementation
      */
-    val streamKmeansClusters = new StreamingKMeans().setDecayFactor(1.0).setK(3).setRandomCenters(10,0.5,6250L).trainOn(featureVectors).predictOn(featureVectors)
+    val streamKmeans = new StreamingKMeans()
+      .setK(3)
+      .setDecayFactor(1.0)
+      .setRandomCenters(10, 0.5, 6250L)
+    val streamKmeansModel = streamKmeans.latestModel()
+    val streamKmeansClusters = streamKmeansModel.predict(featureVectors)
+    //val labels = features.join(phenotypeLabel).map({ case (patientID, (feature, realClass)) => realClass })
+    //streamKmeansModel.predictOnValues(featureVectors)
     val streamKmeansResult = rawFeatureIDs.zip(streamKmeansClusters)
-    val comparestreamKmeans=streamKmeansResult.join(phenotypeLabel).map(_._2)
-    val treamKmeansPurity = Metrics.purity(comparestreamKmeans)
+    val comparestreamKmeans = streamKmeansResult.join(phenotypeLabel).map(_._2)
+    val streamKmeansPurity = Metrics.purity(comparestreamKmeans)
 
     //val streamKmeansPurity = 0.0
     (kMeansPurity, gaussianMixturePurity, streamKmeansPurity)
@@ -190,16 +206,21 @@ object Main {
      * TODO: implement your own code here and remove
      * existing placeholder code below
      */
-    val medicationdata=CSVUtils.loadCSVAsTable(sqlContext,"data/medication_orders_INPUT.csv","MedicationTable")
-    val labResultdata=CSVUtils.loadCSVAsTable(sqlContext,"data/lab_results_INPUT.csv","LabTable")
-    val IDdata=CSVUtils.loadCSVAsTable(sqlContext,"data/encounter_INPUT.csv","IDTable")
-    val diagnosedata=CSVUtils.loadCSVAsTable(sqlContext,"data/encounter_dx_INPUT.csv","DiagTable")
-    val RDDrowmed= sqlContext.sql("SELECT Member_ID AS patientID, Order_Date AS date, Drug_Name AS medicine  FROM MedicationTable")
-    val RDDrowdiag= sqlContext.sql("SELECT IDTable.Member_ID AS patientID, IDTable.Encounter_DateTime AS date, DiagTable.code AS code  FROM IDTable INNER JOIN DiagTable ON IDTable.Encounter_ID= DiagTable.Encounter_ID")
-    val RDDrowlab=  sqlContext.sql("SELECT Member_ID AS patientID, Date_Resulted AS date, Result_Name AS testName, Numeric_Result as value  FROM LabTable WHERE Numeric_Result!=''")
-    val medication: RDD[Medication] = RDDrowmed.map(p => Medication(p(0).asInstanceOf[String],sqlDateParser.parse(p(1).asInstanceOf[String]),p(2).asInstanceOf[String].toLowerCase))
-    val labResult: RDD[LabResult] = RDDrowlab.map(p => LabResult(p(0).asInstanceOf[String],sqlDateParser.parse(p(1).asInstanceOf[String]),p(2).asInstanceOf[String].toLowerCase,p(3).asInstanceOf[String].filterNot(",".toSet).toDouble))
-    val diagnostic: RDD[Diagnostic] =  RDDrowdiag.map(p => Diagnostic(p(0).asInstanceOf[String],sqlDateParser.parse(p(1).asInstanceOf[String]),p(2).asInstanceOf[String].toLowerCase))
+    val format = "yyyy-MM-dd'T'HH:mm:ssX"
+    val dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssX")
+    val lab_results = CSVHelper.loadCSVAsTable(spark, "data/lab_results_INPUT.csv": String, "LAB")
+    val medication_data = CSVHelper.loadCSVAsTable(spark, "data/medication_orders_INPUT.csv": String, "MED")
+    val patient_IDdata = CSVHelper.loadCSVAsTable(spark, "data/encounter_INPUT.csv": String, "DIAG")
+    val patient_diagnostic = CSVHelper.loadCSVAsTable(spark, "data/encounter_dx_INPUT.csv": String, "DIAGDX")
+    val lab = sqlContext.sql("SELECT Member_ID as patientID, Date_Collected as date,Result_Name as testName,Numeric_Result as value FROM LAB WHERE Numeric_Result!=0 OR Numeric_Result='200,000'")
+    val lab_rdd: RDD[LabResult] = lab.rdd.map { r: Row => new LabResult(r.getString(0), this.sqlDateParser(r.getString(1)), r.getString(2).toLowerCase, java.lang.Double.valueOf(r.getString(3).replace(",", ""))) }
+    val med = sqlContext.sql("SELECT Member_ID as patientID, Order_Date as date,Drug_Name as medicine FROM MED")
+    val med_rdd: RDD[Medication] = med.rdd.map { r: Row => new Medication(r.getString(0), this.sqlDateParser(r.getString(1)), r.getString(2).toLowerCase) }
+    val diag = sqlContext.sql("SELECT Member_ID as patientID, Encounter_DateTime as date,DIAGDX.code as code FROM DIAG JOIN DIAGDX ON DIAG.Encounter_ID=DIAGDX.Encounter_ID")
+    val diag_rdd: RDD[Diagnostic] = diag.rdd.map { r: Row => new Diagnostic(r.getString(0), this.sqlDateParser(r.getString(1)), r.getString(2).toLowerCase) }
+    val medication: RDD[Medication] = med_rdd
+    val labResult: RDD[LabResult] = lab_rdd
+    val diagnostic: RDD[Diagnostic] = diag_rdd
 
     (medication, labResult, diagnostic)
   }

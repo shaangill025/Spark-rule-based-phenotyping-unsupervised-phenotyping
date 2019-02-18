@@ -5,7 +5,7 @@
 package edu.gatech.cse6250.clustering
 
 import org.apache.spark.rdd.RDD
-
+import breeze.linalg.{ max }
 object Metrics {
   /**
    * Given input RDD with tuples of assigned cluster id by clustering,
@@ -25,13 +25,13 @@ object Metrics {
      * TODO: Remove the placeholder and implement your code here
      */
 
-    clusterAssignmentAndLabel.map(f =>(f,1))
+    clusterAssignmentAndLabel.map(f => (f, 1))
       .keyBy(_._1)
-      .reduceByKey((x,y) =>(x._1,x._2+y._2))
-      .map(f => (f._2._1._1,f._2._2))
+      .reduceByKey((x, y) => (x._1, x._2 + y._2))
+      .map(f => (f._2._1._1, f._2._2))
       .keyBy(_._1)
-      .reduceByKey((x,y) =>(1,max(x._2,y._2)))
+      .reduceByKey((x, y) => (1, max(x._2, y._2)))
       .map(f => f._2._2)
-      .reduce((x,y) => x+y)/clusterAssignmentAndLabel.count().toDouble
+      .reduce((x, y) => x + y) / clusterAssignmentAndLabel.count().toDouble
   }
 }
