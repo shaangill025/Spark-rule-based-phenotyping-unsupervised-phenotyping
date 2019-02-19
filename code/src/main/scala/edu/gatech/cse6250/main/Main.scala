@@ -104,15 +104,21 @@ object Main {
      * Find Purity using that RDD as an input to Metrics.purity
      * Remove the placeholder below after your implementation
      */
+    val labels = phenotypeLabel
+      .map(_._2)
+      .zipWithIndex
+      .map(x => (x._2, x._1))
+      .cache()
+
     val numClusters = 3
     val iterations = 20
-    //featureVectors.cache()
+    featureVectors.cache()
     val kMeans = new KMeans()
-    kMeans.setK(numClusters)
-    kMeans.setMaxIterations(iterations)
-    kMeans.setInitializationMode("k-means||")
-    kMeans.setInitializationSteps(1)
-    kMeans.setSeed(6250L)
+      .setK(numClusters)
+      .setMaxIterations(iterations)
+      .setInitializationMode("k-means||")
+      .setInitializationSteps(1)
+      .setSeed(6250L)
     val kMeansModel = kMeans.run(featureVectors)
     val kMeansCluster = kMeansModel.predict(featureVectors)
     val kMeansResult = rawFeatureIDs.zip(kMeansCluster)
@@ -213,7 +219,7 @@ object Main {
     val patient_IDdata = CSVHelper.loadCSVAsTable(spark, "data/encounter_INPUT.csv": String, "DIAG")
     val patient_diagnostic = CSVHelper.loadCSVAsTable(spark, "data/encounter_dx_INPUT.csv": String, "DIAGDX")
     val lab = sqlContext.sql("SELECT Member_ID as patientID, Date_Collected as date,Result_Name as testName,Numeric_Result as value FROM LAB WHERE Numeric_Result!=0 OR Numeric_Result='200,000'")
-    val lab_rdd: RDD[LabResult] = lab.rdd.map { r: Row => new LabResult(r.getString(0), this.sqlDateParser(r.getString(1)), r.getString(2).toLowerCase, java.lang.Double.valueOf(r.getString(3).replace(",", ""))) }
+    val lab_rdd: RDD[LabResult] = lab.rdd.map { r: Row => new LabResult(r.getString(0), this.sqlDateParser(r.getString(1)), r.getString(2).toLowerCase, r.getString(3).replace(",", "").toDouble) }
     val med = sqlContext.sql("SELECT Member_ID as patientID, Order_Date as date,Drug_Name as medicine FROM MED")
     val med_rdd: RDD[Medication] = med.rdd.map { r: Row => new Medication(r.getString(0), this.sqlDateParser(r.getString(1)), r.getString(2).toLowerCase) }
     val diag = sqlContext.sql("SELECT Member_ID as patientID, Encounter_DateTime as date,DIAGDX.code as code FROM DIAG JOIN DIAGDX ON DIAG.Encounter_ID=DIAGDX.Encounter_ID")
