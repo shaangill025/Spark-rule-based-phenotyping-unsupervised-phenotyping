@@ -24,10 +24,8 @@ object FeatureConstruction {
      * TODO implement your own code here and remove existing
      * placeholder code
      */
-    diagnostic.map(f => ((f.patientID, f.code), 1.0))
-      .keyBy(f => f._1)
-      .reduceByKey((x, y) => (x._1, x._2 + y._2))
-      .map(f => f._2)
+    val diagnosis_feature = diagnostic.map(x => ((x.patientID, x.code), 1.0)).reduceByKey(_ + _)
+    diagnosis_feature
   }
 
   /**
@@ -41,10 +39,8 @@ object FeatureConstruction {
      * TODO implement your own code here and remove existing
      * placeholder code
      */
-    medication.map(f => ((f.patientID, f.medicine), 1.0))
-      .keyBy(f => f._1)
-      .reduceByKey((x, y) => (x._1, x._2 + y._2))
-      .map(f => f._2)
+    val medication_feature = medication.map(x => ((x.patientID, x.medicine), 1.0)).reduceByKey(_ + _)
+    medication_feature
   }
 
   /**
@@ -58,10 +54,10 @@ object FeatureConstruction {
      * TODO implement your own code here and remove existing
      * placeholder code
      */
-    labResult.map(f => ((f.patientID, f.testName), f.value, 1))
-      .keyBy(_._1)
-      .reduceByKey((x, y) => (x._1, x._2 + y._2, x._3 + y._3))
-      .map(f => (f._1, f._2._2 / f._2._3))
+    val lab_sum = labResult.map(x => ((x.patientID, x.testName), x.value)).reduceByKey(_ + _)
+    val lab_count = labResult.map(x => ((x.patientID, x.testName), 1.0)).reduceByKey(_ + _)
+    val lab_result_feature = lab_sum.join(lab_count).map(x => (x._1, x._2._1 / x._2._2))
+    lab_result_feature
   }
 
   /**
@@ -77,7 +73,9 @@ object FeatureConstruction {
      * TODO implement your own code here and remove existing
      * placeholder code
      */
-    constructDiagnosticFeatureTuple(diagnostic.filter(f => candiateCode.contains(f.code.toLowerCase)))
+    val diagnosis_feature = diagnostic.map(x => ((x.patientID, x.code), 1.0)).reduceByKey(_ + _)
+    val diagnosis_type = diagnosis_feature.filter(x => (candiateCode.contains(x._1._2)))
+    diagnosis_type
   }
 
   /**
@@ -93,7 +91,10 @@ object FeatureConstruction {
      * TODO implement your own code here and remove existing
      * placeholder code
      */
-    constructMedicationFeatureTuple(medication.filter(f => candidateMedication.contains(f.medicine.toLowerCase)))
+    val medication_feature = medication.map(x => ((x.patientID, x.medicine), 1.0)).reduceByKey(_ + _)
+    val medication_type = medication_feature.filter(x => (candidateMedication.contains(x._1._2)))
+    medication_type
+
   }
 
   /**
@@ -109,7 +110,11 @@ object FeatureConstruction {
      * TODO implement your own code here and remove existing
      * placeholder code
      */
-    constructLabFeatureTuple(labResult.filter(f => candidateLab.contains(f.testName.toLowerCase)))
+    val lab_sum = labResult.map(x => ((x.patientID, x.testName), x.value)).reduceByKey(_ + _)
+    val lab_count = labResult.map(x => ((x.patientID, x.testName), 1.0)).reduceByKey(_ + _)
+    val lab_result_feature = lab_sum.join(lab_count).map(x => (x._1, x._2._1 / x._2._2))
+    val lab_result_type = lab_result_feature.filter(x => (candidateLab.contains(x._1._2)))
+    lab_result_type
   }
 
   /**
@@ -154,14 +159,22 @@ object FeatureConstruction {
      * ("Patient-NO-10", Vectors.dense(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0))))
      */
 
-    val id_map = sc.broadcast(feature.map(f => f._1._2).distinct().zipWithIndex().collectAsMap())
-    val id_num = id_map.value.size
+    feature.cache()
+
+    /** create a feature name to id map*/
+    val features_index = feature.map(_._1._2).distinct().collect.zipWithIndex.toMap
+    val scFeatureMap = sc.broadcast(features_index)
 
     /** transform input feature */
-    val result = feature.map(f => (f._1._1, id_map.value(f._1._2), f._2)).groupBy(_._1).map(f => {
-      val featuresList = f._2.toList.map(x => (x._2.toInt, x._3))
-      (f._1, Vectors.sparse(id_num, featuresList))
-    })
+    val patientAndFeatures = feature.map(x => (x._1._1, (x._1._2, x._2))).groupByKey()
+    val result = patientAndFeatures.map {
+      case (target, features) =>
+        val num_features = scFeatureMap.value.size
+        val idx_features = features.toList.map { case (feature_name, featureValue) => (scFeatureMap.value(feature_name), featureValue) }
+        val featureVector = Vectors.sparse(num_features, idx_features)
+        val label_point = (target, featureVector)
+        label_point
+    }
     result
 
     /** The feature vectors returned can be sparse or dense. It is advisable to use sparse */

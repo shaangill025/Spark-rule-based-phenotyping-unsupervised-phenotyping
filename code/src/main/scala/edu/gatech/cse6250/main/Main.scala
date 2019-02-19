@@ -153,16 +153,13 @@ object Main {
      * Remove the placeholder below after your implementation
      */
     val streamKmeans = new StreamingKMeans()
-      .setK(3)
+      .setK(numClusters)
       .setDecayFactor(1.0)
       .setRandomCenters(10, 0.5, 6250L)
     val streamKmeansModel = streamKmeans.latestModel()
-    val streamKmeansClusters = streamKmeansModel.predict(featureVectors)
-    //val labels = features.join(phenotypeLabel).map({ case (patientID, (feature, realClass)) => realClass })
-    //streamKmeansModel.predictOnValues(featureVectors)
-    val streamKmeansResult = rawFeatureIDs.zip(streamKmeansClusters)
-    val comparestreamKmeans = streamKmeansResult.join(phenotypeLabel).map(_._2)
-    val streamKmeansPurity = Metrics.purity(comparestreamKmeans)
+    val streamKmeansPred = streamKmeansModel.update(featureVectors, 1.0, "batches").predict(featureVectors)
+    val streamingKeansTest = features.map(_._1).zip(streamKmeansPred).join(phenotypeLabel).map(_._2)
+    val streamKmeansPurity = Metrics.purity(streamingKeansTest)
 
     //val streamKmeansPurity = 0.0
     (kMeansPurity, gaussianMixturePurity, streamKmeansPurity)
